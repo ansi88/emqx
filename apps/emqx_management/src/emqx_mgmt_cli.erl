@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2020 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2020-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -38,7 +38,6 @@
         , trace/1
         , log/1
         , mgmt/1
-        , data/1
         , acl/1
         ]).
 
@@ -116,13 +115,7 @@ mgmt(_) ->
 
 status([]) ->
     {InternalStatus, _ProvidedStatus} = init:get_status(),
-    emqx_ctl:print("Node ~p ~s is ~p~n", [node(), emqx_app:get_release(), InternalStatus]),
-    case lists:keysearch(?APP, 1, application:which_applications()) of
-        false ->
-            emqx_ctl:print("Application ~s is not running~n", [?APP]);
-        {value, {?APP, _Desc, Vsn}} ->
-            emqx_ctl:print("Application ~s ~s is running~n", [?APP, Vsn])
-    end;
+    emqx_ctl:print("Node ~p ~s is ~p~n", [node(), emqx_app:get_release(), InternalStatus]);
 status(_) ->
      emqx_ctl:usage("status", "Show broker status").
 
@@ -470,115 +463,56 @@ trace_off(Who, Name) ->
 
 listeners([]) ->
     lists:foreach(fun({{Protocol, ListenOn}, _Pid}) ->
-                Info = [{listen_on,      {string, emqx_listeners:format_listen_on(ListenOn)}},
+                Info = [{listen_on,      {string, format_listen_on(ListenOn)}},
                         {acceptors,      esockd:get_acceptors({Protocol, ListenOn})},
                         {max_conns,      esockd:get_max_connections({Protocol, ListenOn})},
                         {current_conn,   esockd:get_current_connections({Protocol, ListenOn})},
                         {shutdown_count, esockd:get_shutdown_count({Protocol, ListenOn})}
                        ],
-                    emqx_ctl:print("~s~n", [listener_identifier(Protocol, ListenOn)]),
+                    emqx_ctl:print("~s~n", [Protocol]),
                 lists:foreach(fun indent_print/1, Info)
             end, esockd:listeners()),
     lists:foreach(fun({Protocol, Opts}) ->
                 Port = proplists:get_value(port, Opts),
-                Info = [{listen_on,      {string, emqx_listeners:format_listen_on(Port)}},
+                Info = [{listen_on,      {string, format_listen_on(Port)}},
                         {acceptors,      maps:get(num_acceptors, proplists:get_value(transport_options, Opts, #{}), 0)},
                         {max_conns,      proplists:get_value(max_connections, Opts)},
                         {current_conn,   proplists:get_value(all_connections, Opts)},
                         {shutdown_count, []}],
-                    emqx_ctl:print("~s~n", [listener_identifier(Protocol, Port)]),
+                    emqx_ctl:print("~s~n", [Protocol]),
                 lists:foreach(fun indent_print/1, Info)
             end, ranch:info());
 
-listeners(["stop",  Name = "http" ++ _N | _MaybePort]) ->
-    %% _MaybePort is to be backward compatible, to stop http listener, there is no need for the port number
-    case minirest:stop_http(list_to_atom(Name)) of
+listeners(["stop", ListenerId]) ->
+    case emqx_listeners:stop_listener(list_to_atom(ListenerId)) of
         ok ->
-            emqx_ctl:print("Stop ~s listener successfully.~n", [Name]);
+            emqx_ctl:print("Stop ~s listener successfully.~n", [ListenerId]);
         {error, Error} ->
-            emqx_ctl:print("Failed to stop ~s listener: ~0p~n", [Name, Error])
+            emqx_ctl:print("Failed to stop ~s listener: ~0p~n", [ListenerId, Error])
     end;
 
-listeners(["stop", "mqtt:" ++ _ = Identifier]) ->
-    stop_listener(emqx_listeners:find_by_id(Identifier), Identifier);
-
-listeners(["stop", _Proto, ListenOn]) ->
-    %% this clause is kept to be backward compatible
-    ListenOn1 = case string:tokens(ListenOn, ":") of
-        [Port]     -> list_to_integer(Port);
-        [IP, Port] -> {IP, list_to_integer(Port)}
-    end,
-    stop_listener(emqx_listeners:find_by_listen_on(ListenOn1), ListenOn1);
-
-listeners(["restart", "http:management"]) ->
-    restart_http_listener(http, emqx_management);
-
-listeners(["restart", "https:management"]) ->
-    restart_http_listener(https, emqx_management);
-
-listeners(["restart", "http:dashboard"]) ->
-    restart_http_listener(http, emqx_dashboard);
-
-listeners(["restart", "https:dashboard"]) ->
-    restart_http_listener(https, emqx_dashboard);
-
-listeners(["restart", Identifier]) ->
-    case emqx_listeners:restart_listener(Identifier) of
+listeners(["start", ListenerId]) ->
+    case emqx_listeners:start_listener(list_to_atom(ListenerId)) of
         ok ->
-            emqx_ctl:print("Restarted ~s listener successfully.~n", [Identifier]);
+            emqx_ctl:print("Started ~s listener successfully.~n", [ListenerId]);
         {error, Error} ->
-            emqx_ctl:print("Failed to restart ~s listener: ~0p~n", [Identifier, Error])
+            emqx_ctl:print("Failed to start ~s listener: ~0p~n", [ListenerId, Error])
+    end;
+
+listeners(["restart", ListenerId]) ->
+    case emqx_listeners:restart_listener(list_to_atom(ListenerId)) of
+        ok ->
+            emqx_ctl:print("Restarted ~s listener successfully.~n", [ListenerId]);
+        {error, Error} ->
+            emqx_ctl:print("Failed to restart ~s listener: ~0p~n", [ListenerId, Error])
     end;
 
 listeners(_) ->
     emqx_ctl:usage([{"listeners",                        "List listeners"},
                     {"listeners stop    <Identifier>",   "Stop a listener"},
-                    {"listeners stop    <Proto> <Port>", "Stop a listener"},
+                    {"listeners start   <Identifier>",   "Start a listener"},
                     {"listeners restart <Identifier>",   "Restart a listener"}
                    ]).
-
-stop_listener(false, Input) ->
-    emqx_ctl:print("No such listener ~p~n", [Input]);
-stop_listener(#{listen_on := ListenOn} = Listener, _Input) ->
-    ID = emqx_listeners:identifier(Listener),
-    ListenOnStr = emqx_listeners:format_listen_on(ListenOn),
-    case emqx_listeners:stop_listener(Listener) of
-        ok ->
-            emqx_ctl:print("Stop ~s listener on ~s successfully.~n", [ID, ListenOnStr]);
-        {error, Reason} ->
-            emqx_ctl:print("Failed to stop ~s listener on ~s: ~0p~n",
-                           [ID, ListenOnStr, Reason])
-    end.
-
-%%--------------------------------------------------------------------
-%% @doc data Command
-
-data(["export"]) ->
-    case emqx_mgmt_data_backup:export() of
-        {ok, #{filename := Filename}} ->
-            emqx_ctl:print("The emqx data has been successfully exported to ~s.~n", [Filename]);
-        {error, Reason} ->
-            emqx_ctl:print("The emqx data export failed due to ~p.~n", [Reason])
-    end;
-
-data(["import", Filename]) ->
-    data(["import", Filename, "--env", "{}"]);
-data(["import", Filename, "--env", Env]) ->
-    case emqx_mgmt_data_backup:import(Filename, Env) of
-        ok ->
-            emqx_ctl:print("The emqx data has been imported successfully.~n");
-        {error, import_failed} ->
-            emqx_ctl:print("The emqx data import failed.~n");
-        {error, unsupported_version} ->
-            emqx_ctl:print("The emqx data import failed: Unsupported version.~n");
-        {error, Reason} ->
-            emqx_ctl:print("The emqx data import failed: ~0p while reading ~s.~n", [Reason, Filename])
-    end;
-
-data(_) ->
-    emqx_ctl:usage([{"data import <File> [--env '<json>']",
-                     "Import data from the specified file, possibly with overrides"},
-                    {"data export", "Export data"}]).
 
 %%--------------------------------------------------------------------
 %% @doc acl Command
@@ -698,24 +632,9 @@ indent_print({Key, {string, Val}}) ->
 indent_print({Key, Val}) ->
     emqx_ctl:print("  ~-16s: ~w~n", [Key, Val]).
 
-listener_identifier(Protocol, ListenOn) ->
-    case emqx_listeners:find_id_by_listen_on(ListenOn) of
-        false ->
-            atom_to_list(Protocol);
-        ID ->
-            ID
-    end.
-
-restart_http_listener(Scheme, AppName) ->
-    Listeners = application:get_env(AppName, listeners, []),
-    case lists:keyfind(Scheme, 1, Listeners) of
-        false ->
-            emqx_ctl:print("Listener ~s not exists!~n", [AppName]);
-        {Scheme, Port, Options} ->
-            ModName = http_mod_name(AppName),
-            ModName:stop_listener({Scheme, Port, Options}),
-            ModName:start_listener({Scheme, Port, Options})
-    end.
-
-http_mod_name(emqx_management) -> emqx_mgmt_http;
-http_mod_name(Name) -> Name.
+format_listen_on(Port) when is_integer(Port) ->
+    io_lib:format("0.0.0.0:~w", [Port]);
+format_listen_on({Addr, Port}) when is_list(Addr) ->
+    io_lib:format("~s:~w", [Addr, Port]);
+format_listen_on({Addr, Port}) when is_tuple(Addr) ->
+    io_lib:format("~s:~w", [inet:ntoa(Addr), Port]).

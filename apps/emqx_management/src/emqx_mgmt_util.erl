@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2020 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2020-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -21,7 +21,17 @@
         , kmg/1
         , ntoa/1
         , merge_maps/2
+        , batch_operation/3
         ]).
+
+-export([ request_body_schema/1
+        , request_body_array_schema/1
+        , response_schema/1
+        , response_schema/2
+        , response_array_schema/2
+        , response_error_schema/1
+        , response_error_schema/2
+        , batch_response_schema/1]).
 
 -export([urldecode/1]).
 
@@ -77,3 +87,98 @@ merge_maps(Default, New) ->
 urldecode(S) ->
     emqx_http_lib:uri_decode(S).
 
+%%%==============================================================================================
+%% schema util
+
+request_body_array_schema(Schema) when is_map(Schema) ->
+    json_content_schema("", #{type => array, items => Schema});
+request_body_array_schema(Ref) when is_binary(Ref) ->
+    json_content_schema("", #{type => array, items => minirest:ref(Ref)}).
+
+request_body_schema(Schema) when is_map(Schema) ->
+    json_content_schema("", Schema);
+request_body_schema(Ref) when is_binary(Ref) ->
+    json_content_schema("", minirest:ref(Ref)).
+
+response_array_schema(Description, Schema) when is_map(Schema) ->
+    json_content_schema(Description, #{type => array, items => Schema});
+response_array_schema(Description, Ref) when is_binary(Ref) ->
+    json_content_schema(Description, #{type => array, items => minirest:ref(Ref)}).
+
+response_schema(Description) ->
+    json_content_schema(Description).
+
+response_schema(Description, Schema) when is_map(Schema) ->
+    json_content_schema(Description, Schema);
+response_schema(Description, Ref) when is_binary(Ref) ->
+    json_content_schema(Description, minirest:ref(Ref)).
+
+%% @doc default code is RESOURCE_NOT_FOUND
+response_error_schema(Description) ->
+    response_error_schema(Description, ['RESOURCE_NOT_FOUND']).
+
+response_error_schema(Description, Enum) ->
+    Schema = #{
+        type => object,
+        properties => #{
+            code => #{
+                type => string,
+                enum => Enum},
+            reason => #{
+                type => string}}},
+    json_content_schema(Description, Schema).
+
+batch_response_schema(DefName) when is_binary(DefName) ->
+    Schema = #{
+        type => object,
+        properties => #{
+            success => #{
+                type => integer,
+                description => <<"Success count">>},
+            failed => #{
+                type => integer,
+                description => <<"Failed count">>},
+            detail => #{
+                type => array,
+                description => <<"Failed object & reason">>,
+                items => #{
+                    type => object,
+                    properties =>
+                    #{
+                        data => minirest:ref(DefName),
+                        reason => #{
+                            type => <<"string">>}}}}}},
+    json_content_schema("", Schema).
+
+json_content_schema(Description, Schema) ->
+    Content =
+        #{content => #{
+            'application/json' => #{
+                schema => Schema}}},
+    case Description of
+        "" ->
+            Content;
+        _ ->
+            maps:merge(#{description => Description}, Content)
+    end.
+
+json_content_schema(Description) ->
+    #{description => Description}.
+
+%%%==============================================================================================
+batch_operation(Module, Function, ArgsList) ->
+    Failed = batch_operation(Module, Function, ArgsList, []),
+    Len = erlang:length(Failed),
+    Success = erlang:length(ArgsList) - Len,
+    Fun = fun({Args, Reason}, Detail) -> [#{data => Args, reason => io_lib:format("~p", [Reason])} | Detail] end,
+    #{success => Success, failed => Len, detail => lists:foldl(Fun, [], Failed)}.
+
+batch_operation(_Module, _Function, [], Failed) ->
+    lists:reverse(Failed);
+batch_operation(Module, Function, [Args | ArgsList], Failed) ->
+    case erlang:apply(Module, Function, Args) of
+        ok ->
+            batch_operation(Module, Function, ArgsList, Failed);
+        {error ,Reason} ->
+            batch_operation(Module, Function, ArgsList, [{Args, Reason} | Failed])
+    end.

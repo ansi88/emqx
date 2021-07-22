@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2020 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2020-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -24,8 +24,6 @@
 
 -include_lib("prometheus/include/prometheus.hrl").
 -include_lib("prometheus/include/prometheus_model.hrl").
-
--import(minirest, [return/1]).
 
 -rest_api(#{name   => stats,
             method => 'GET',
@@ -414,8 +412,8 @@ emqx_collect(emqx_client_authenticate, Stats) ->
     counter_metric(?C('client.authenticate', Stats));
 emqx_collect(emqx_client_auth_anonymous, Stats) ->
     counter_metric(?C('client.auth.anonymous', Stats));
-emqx_collect(emqx_client_check_acl, Stats) ->
-    counter_metric(?C('client.check_acl', Stats));
+emqx_collect(emqx_client_authorize, Stats) ->
+    counter_metric(?C('client.authorize', Stats));
 emqx_collect(emqx_client_subscribe, Stats) ->
     counter_metric(?C('client.subscribe', Stats));
 emqx_collect(emqx_client_unsubscribe, Stats) ->
@@ -567,7 +565,7 @@ emqx_metrics_client() ->
     [ emqx_client_connected
     , emqx_client_authenticate
     , emqx_client_auth_anonymous
-    , emqx_client_check_acl
+    , emqx_client_authorize
     , emqx_client_subscribe
     , emqx_client_unsubscribe
     , emqx_client_disconnected
@@ -610,3 +608,7 @@ emqx_cluster_data() ->
     #{running_nodes := Running, stopped_nodes := Stopped} = ekka_mnesia:cluster_info(),
     [{nodes_running, length(Running)},
      {nodes_stopped, length(Stopped)}].
+
+%% TODO: V5 API
+return(_) ->
+    ok.

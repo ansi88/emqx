@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2020 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2020-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -69,36 +69,36 @@
         ]).
 
 list(#{node := Node}, _Params) ->
-    minirest:return({ok, [format(Plugin) || Plugin <- emqx_mgmt:list_plugins(Node)]});
+    emqx_mgmt:return({ok, [format(Plugin) || Plugin <- emqx_mgmt:list_plugins(Node)]});
 
 list(_Bindings, _Params) ->
-    minirest:return({ok, [format({Node, Plugins}) || {Node, Plugins} <- emqx_mgmt:list_plugins()]}).
+    emqx_mgmt:return({ok, [format({Node, Plugins}) || {Node, Plugins} <- emqx_mgmt:list_plugins()]}).
 
 load(#{node := Node, plugin := Plugin}, _Params) ->
-    minirest:return(emqx_mgmt:load_plugin(Node, Plugin)).
+    emqx_mgmt:return(emqx_mgmt:load_plugin(Node, Plugin)).
 
 unload(#{node := Node, plugin := Plugin}, _Params) ->
-    minirest:return(emqx_mgmt:unload_plugin(Node, Plugin));
+    emqx_mgmt:return(emqx_mgmt:unload_plugin(Node, Plugin));
 
 unload(#{plugin := Plugin}, _Params) ->
     Results = [emqx_mgmt:unload_plugin(Node, Plugin) || {Node, _Info} <- emqx_mgmt:list_nodes()],
     case lists:filter(fun(Item) -> Item =/= ok end, Results) of
         [] ->
-            minirest:return(ok);
+            emqx_mgmt:return(ok);
         Errors ->
-            minirest:return(lists:last(Errors))
+            emqx_mgmt:return(lists:last(Errors))
     end.
 
 reload(#{node := Node, plugin := Plugin}, _Params) ->
-    minirest:return(emqx_mgmt:reload_plugin(Node, Plugin));
+    emqx_mgmt:return(emqx_mgmt:reload_plugin(Node, Plugin));
 
 reload(#{plugin := Plugin}, _Params) ->
     Results = [emqx_mgmt:reload_plugin(Node, Plugin) || {Node, _Info} <- emqx_mgmt:list_nodes()],
     case lists:filter(fun(Item) -> Item =/= ok end, Results) of
         [] ->
-            minirest:return(ok);
+            emqx_mgmt:return(ok);
         Errors ->
-            minirest:return(lists:last(Errors))
+            emqx_mgmt:return(lists:last(Errors))
     end.
 
 format({Node, Plugins}) ->
@@ -106,10 +106,8 @@ format({Node, Plugins}) ->
 
 format(#plugin{name = Name,
                descr = Descr,
-               active = Active,
-               type = Type}) ->
+               active = Active}) ->
     #{name => Name,
       description => iolist_to_binary(Descr),
-      active => Active,
-      type => Type}.
+      active => Active}.
 

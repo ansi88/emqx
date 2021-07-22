@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2020 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2020-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -101,24 +101,23 @@
         , delete_banned/1
         ]).
 
--ifndef(EMQX_ENTERPRISE).
-
--export([ enable_telemetry/0
-        , disable_telemetry/0
-        , get_telemetry_status/0
-        , get_telemetry_data/0
-        ]).
-
--endif.
-
 %% Common Table API
 -export([ item/2
         , max_row_limit/0
         ]).
 
+-export([ return/0
+        , return/1]).
+
 -define(MAX_ROW_LIMIT, 10000).
 
 -define(APP, emqx_management).
+
+%% TODO: remove these function after all api use minirest version 1.X
+return() ->
+    ok.
+return(_Response) ->
+    ok.
 
 %%--------------------------------------------------------------------
 %% Node Info
@@ -139,7 +138,7 @@ node_info(Node) when Node =:= node() ->
     Info#{node              => node(),
           otp_release       => iolist_to_binary(otp_rel()),
           memory_total      => proplists:get_value(allocated, Memory),
-          memory_used       => proplists:get_value(used, Memory),
+          memory_used       => proplists:get_value(total, Memory),
           process_available => erlang:system_info(process_limit),
           process_used      => erlang:system_info(process_count),
           max_fds           => proplists:get_value(max_fds, lists:usort(lists:flatten(erlang:system_info(check_io)))),
@@ -176,7 +175,7 @@ broker_info(Node) ->
 %%--------------------------------------------------------------------
 
 get_metrics() ->
-    [{Node, get_metrics(Node)} || Node <- ekka_mnesia:running_nodes()].
+    nodes_info_count([get_metrics(Node) || Node <- ekka_mnesia:running_nodes()]).
 
 get_metrics(Node) when Node =:= node() ->
     emqx_metrics:all();
@@ -184,12 +183,43 @@ get_metrics(Node) ->
     rpc_call(Node, get_metrics, [Node]).
 
 get_stats() ->
-    [{Node, get_stats(Node)} || Node <- ekka_mnesia:running_nodes()].
+    GlobalStatsKeys =
+        [ 'retained.count'
+        , 'retained.max'
+        , 'routes.count'
+        , 'routes.max'
+        , 'subscriptions.shared.count'
+        , 'subscriptions.shared.max'
+        ],
+    CountStats = nodes_info_count([
+        begin
+            Stats = get_stats(Node),
+            delete_keys(Stats, GlobalStatsKeys)
+        end || Node <- ekka_mnesia:running_nodes()]),
+    GlobalStats = maps:with(GlobalStatsKeys, maps:from_list(get_stats(node()))),
+    maps:merge(CountStats, GlobalStats).
+
+delete_keys(List, []) ->
+    List;
+delete_keys(List, [Key | Keys]) ->
+    delete_keys(proplists:delete(Key, List), Keys).
 
 get_stats(Node) when Node =:= node() ->
     emqx_stats:getstats();
 get_stats(Node) ->
     rpc_call(Node, get_stats, [Node]).
+
+nodes_info_count(PropList) ->
+    NodeCount =
+        fun({Key, Value}, Result) ->
+            Count = maps:get(Key, Result, 0),
+            Result#{Key => Count + Value}
+        end,
+    AllCount =
+        fun(StatsMap, Result) ->
+            lists:foldl(NodeCount, Result, StatsMap)
+        end,
+    lists:foldl(AllCount, #{}, PropList).
 
 %%--------------------------------------------------------------------
 %% Clients
@@ -427,7 +457,7 @@ list_listeners(Node) when Node =:= node() ->
     Tcp = lists:map(fun({{Protocol, ListenOn}, _Pid}) ->
         #{protocol        => Protocol,
           listen_on       => ListenOn,
-          identifier      => emqx_listeners:find_id_by_listen_on(ListenOn),
+          identifier      => Protocol,
           acceptors       => esockd:get_acceptors({Protocol, ListenOn}),
           max_conns       => esockd:get_max_connections({Protocol, ListenOn}),
           current_conns   => esockd:get_current_connections({Protocol, ListenOn}),
@@ -446,6 +476,7 @@ list_listeners(Node) when Node =:= node() ->
 list_listeners(Node) ->
     rpc_call(Node, list_listeners, [Node]).
 
+-spec restart_listener(node(), atom()) -> ok | {error, term()}.
 restart_listener(Node, Identifier) when Node =:= node() ->
     emqx_listeners:restart_listener(Identifier);
 
@@ -498,38 +529,6 @@ create_banned(Banned) ->
 delete_banned(Who) ->
     emqx_banned:delete(Who).
 
-
-
-%%--------------------------------------------------------------------
-%% Telemtry API
-%%--------------------------------------------------------------------
-
--ifndef(EMQX_ENTERPRISE).
-
-enable_telemetry() ->
-    lists:foreach(fun enable_telemetry/1,ekka_mnesia:running_nodes()).
-
-enable_telemetry(Node) when Node =:= node() ->
-    emqx_telemetry:enable();
-enable_telemetry(Node) ->
-    rpc_call(Node, enable_telemetry, [Node]).
-
-disable_telemetry() ->
-    lists:foreach(fun disable_telemetry/1,ekka_mnesia:running_nodes()).
-
-disable_telemetry(Node) when Node =:= node() ->
-    emqx_telemetry:disable();
-disable_telemetry(Node) ->
-    rpc_call(Node, disable_telemetry, [Node]).
-
-get_telemetry_status() ->
-    [{enabled, emqx_telemetry:is_enabled()}].
-
-get_telemetry_data() ->
-    emqx_telemetry:get_telemetry().
-
--endif.
-
 %%--------------------------------------------------------------------
 %% Common Table API
 %%--------------------------------------------------------------------
@@ -553,7 +552,7 @@ rpc_call(Node, Fun, Args) ->
     end.
 
 otp_rel() ->
-    lists:concat(["R", erlang:system_info(otp_release), "/", erlang:system_info(version)]).
+    lists:concat([emqx_vm:get_otp_version(), "/", erlang:system_info(version)]).
 
 check_row_limit(Tables) ->
     check_row_limit(Tables, max_row_limit()).
@@ -567,7 +566,7 @@ check_row_limit([Tab|Tables], Limit) ->
     end.
 
 max_row_limit() ->
-    application:get_env(?APP, max_row_limit, ?MAX_ROW_LIMIT).
+    emqx_config:get([?APP, max_row_limit], ?MAX_ROW_LIMIT).
 
 table_size(Tab) -> ets:info(Tab, size).
 

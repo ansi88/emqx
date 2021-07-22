@@ -47,26 +47,12 @@ spec:
         version: {{ .Chart.AppVersion }}
         app.kubernetes.io/name: {{ include "emqx.name" . }}
         app.kubernetes.io/instance: {{ .Release.Name }}
+      {{- if .Values.recreatePods }}
+      annotations:
+        checksum/config: {{ include (print $.Template.BasePath "/configmap.yaml") . | sha256sum | quote }}
+      {{- end }}
     spec:
       volumes:
-      - name: emqx-loaded-plugins
-        configMap:
-          name: {{ include "emqx.fullname" . }}-loaded-plugins
-          items:
-          - key: loaded_plugins
-            path: loaded_plugins
-      - name: emqx-loaded-modules
-        configMap:
-          name: {{ include "emqx.fullname" . }}-loaded-modules
-          items:
-          - key: loaded_modules
-            path: loaded_modules
-      - name: emqx-acl
-        configMap:
-          name: {{ include "emqx.fullname" . }}-acl
-          items:
-          - key: acl.conf
-            path: acl.conf
       {{- if not .Values.persistence.enabled }}
       - name: emqx-data
         emptyDir: {}
@@ -130,7 +116,7 @@ spec:
             value: {{ .Release.Name }}
           - name: EMQX_CLUSTER__K8S__APP_NAME
             value: {{ .Release.Name }}
-          - name: EMQX_CLUSTER__DISCOVERY
+          - name: EMQX_CLUSTER__DISCOVERY_STRATEGY
             value: k8s
           - name: EMQX_CLUSTER__K8S__SERVICE_NAME
             value: {{ include "emqx.fullname" . }}-headless
@@ -141,15 +127,6 @@ spec:
           volumeMounts:
           - name: emqx-data
             mountPath: "/opt/emqx/data/mnesia"
-          - name: emqx-acl
-            mountPath: "/opt/emqx/etc/acl.conf"
-            subPath: "acl.conf"
-          - name: emqx-loaded-plugins
-            mountPath: "/opt/emqx/data/loaded_plugins"
-            subPath: "loaded_plugins"
-          - name: emqx-loaded-modules
-            mountPath: "/opt/emqx/data/loaded_modules"
-            subPath: "loaded_modules"
           {{ if .Values.emqxLicneseSecretName  }}
           - name: emqx-license
             mountPath: "/opt/emqx/etc/emqx.lic"
@@ -158,7 +135,7 @@ spec:
           {{ end }}
           readinessProbe:
             httpGet:
-              path: /status
+              path: /api/v5/status
               port: {{ .Values.emqxConfig.EMQX_MANAGEMENT__LISTENER__HTTP | default 8081 }}
             initialDelaySeconds: 5
             periodSeconds: 5

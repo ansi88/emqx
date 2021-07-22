@@ -1,5 +1,5 @@
 %%--------------------------------------------------------------------
-%% Copyright (c) 2020 EMQ Technologies Co., Ltd. All Rights Reserved.
+%% Copyright (c) 2020-2021 EMQ Technologies Co., Ltd. All Rights Reserved.
 %%
 %% Licensed under the Apache License, Version 2.0 (the "License");
 %% you may not use this file except in compliance with the License.
@@ -125,13 +125,13 @@ get_name(Params) ->
     binary_to_atom(proplists:get_value(<<"name">>, Params, undefined), utf8).
 
 do_deactivate(undefined, _) ->
-    minirest:return({error, missing_param});
+    emqx_mgmt:return({error, missing_param});
 do_deactivate(_, undefined) ->
-    minirest:return({error, missing_param});
+    emqx_mgmt:return({error, missing_param});
 do_deactivate(Node, Name) ->
     case emqx_mgmt:deactivate(Node, Name) of
         ok ->
-            minirest:return();
+            emqx_mgmt:return();
         {error, Reason} ->
-            minirest:return({error, Reason})
+            emqx_mgmt:return({error, Reason})
     end.

@@ -43,20 +43,20 @@ Use the environment variable to configure the EMQ X docker container.
 
 By default, the environment variables with ``EMQX_`` prefix are mapped to key-value pairs in configuration files.
 
-You can change the prefix by overriding "CUTTLEFISH_ENV_OVERRIDE_PREFIX".
+You can change the prefix by overriding "HOCON_ENV_OVERRIDE_PREFIX".
 
 Example:
 
 ```bash
-EMQX_LISTENER__SSL__EXTERNAL__ACCEPTORS <--> listener.ssl.external.acceptors
-EMQX_MQTT__MAX_PACKET_SIZE              <--> mqtt.max_packet_size
+EMQX_ZONES__DEFAULT__LISTENERS__MQTT_SSL__ACCEPTORS <--> zones.default.listeners.mqtt_ssl.acceptors
+EMQX_ZONES__DEFAULT__MQTT__MAX_PACKET_SIZE <--> zones.default.mqtt.max_packet_size
 ```
 
 + Prefix ``EMQX_`` is removed
 + All upper case letters is replaced with lower case letters
 + ``__`` is replaced with ``.``
 
-If `CUTTLEFISH_ENV_OVERRIDE_PREFIX=DEV_` is set:
+If `HOCON_ENV_OVERRIDE_PREFIX=DEV_` is set:
 
 ```bash
 DEV_LISTENER__SSL__EXTERNAL__ACCEPTORS <--> listener.ssl.external.acceptors
@@ -83,11 +83,11 @@ These environment variables will ignore for configuration file.
 
 The list is incomplete and may changed with [etc/emqx.conf](https://github.com/emqx/emqx/blob/master/etc/emqx.conf) and plugin configuration files. But the mapping rule is similar.
 
-If set ``EMQX_NAME`` and ``EMQX_HOST``, and unset ``EMQX_NODE__NAME``, ``EMQX_NODE__NAME=$EMQX_NAME@$EMQX_HOST``.
+If set ``EMQX_NAME`` and ``EMQX_HOST``, and unset ``EMQX_NODE_NAME``, ``EMQX_NODE_NAME=$EMQX_NAME@$EMQX_HOST``.
 
 For example, set mqtt tcp port to 1883
 
-``docker run -d --name emqx -e EMQX_LISTENER__TCP__EXTERNAL=1883 -p 18083:18083 -p 1883:1883 emqx/emqx:latest``
+``docker run -d --name emqx -e EMQX_ZONES__DEFAULT__LISTENERS__MQTT_TCP__BIND=1883 -p 18083:18083 -p 1883:1883 emqx/emqx:latest``
 
 #### EMQ Loaded Modules Configuration
 
@@ -97,12 +97,11 @@ For example, set mqtt tcp port to 1883
 
 Default environment variable ``EMQX_LOADED_MODULES``, including
 
-+ ``emqx_mod_acl_internal``
 + ``emqx_mod_presence``
 
 ```bash
 # The default EMQX_LOADED_MODULES env
-EMQX_LOADED_MODULES="emqx_mod_acl_internal,emqx_mod_acl_internal"
+EMQX_LOADED_MODULES="emqx_mod_presence"
 ```
 
 For example, set ``EMQX_LOADED_MODULES=emqx_mod_delayed,emqx_mod_rewrite`` to load these two modules.
@@ -136,16 +135,16 @@ Default environment variable ``EMQX_LOADED_PLUGINS``, including
 EMQX_LOADED_PLUGINS="emqx_recon,emqx_retainer,emqx_management,emqx_dashboard"
 ```
 
-For example, set ``EMQX_LOADED_PLUGINS= emqx_auth_redis,emqx_auth_mysql`` to load these two plugins.
+For example, set ``EMQX_LOADED_PLUGINS= emqx_retainer,emqx_rule_engine`` to load these two plugins.
 
 You can use comma, space or other separator that you want.
 
 All the plugins defined in ``EMQX_LOADED_PLUGINS`` will be loaded.
 
 ```bash
-EMQX_LOADED_PLUGINS="emqx_auth_redis,emqx_auth_mysql"
-EMQX_LOADED_PLUGINS="emqx_auth_redis emqx_auth_mysql"
-EMQX_LOADED_PLUGINS="emqx_auth_redis | emqx_auth_mysql"
+EMQX_LOADED_PLUGINS="emqx_retainer,emqx_rule_engine"
+EMQX_LOADED_PLUGINS="emqx_retainer emqx_rule_engine"
+EMQX_LOADED_PLUGINS="emqx_retainer | emqx_rule_engine"
 ```
 
 #### EMQ X Plugins Configuration
@@ -155,8 +154,8 @@ The environment variables which with ``EMQX_`` prefix are mapped to all emqx plu
 Example:
 
 ```bash
-EMQX_AUTH__REDIS__SERVER   <--> auth.redis.server
-EMQX_AUTH__REDIS__PASSWORD <--> auth.redis.password
+EMQX_RETAINER__STORAGE_TYPE <--> retainer.storage_type
+EMQX_RETAINER__MAX_PAYLOAD_SIZE <--> retainer.max_payload_size
 ```
 
 Don't worry about where to find the configuration file of emqx plugins, this docker image will find and config them automatically using some magic.
@@ -166,15 +165,14 @@ All plugin of emqx project could config in this way, following the environment v
 Assume you are using redis auth plugin, for example:
 
 ```bash
-#EMQX_AUTH__REDIS__SERVER="redis.at.yourserver"
-#EMQX_AUTH__REDIS__PASSWORD="password_for_redis"
+#EMQX_RETAINER__STORAGE_TYPE = "ram"
+#EMQX_RETAINER.MAX_PAYLOAD_SIZE = 1MB
 
 docker run -d --name emqx -p 18083:18083 -p 1883:1883 -p 4369:4369 \
     -e EMQX_LISTENER__TCP__EXTERNAL=1883 \
-    -e EMQX_LOADED_PLUGINS="emqx_auth_redis" \
-    -e EMQX_AUTH__REDIS__SERVER="your.redis.server:6379" \
-    -e EMQX_AUTH__REDIS__PASSWORD="password_for_redis" \
-    -e EMQX_AUTH__REDIS__PASSWORD_HASH=plain \
+    -e EMQX_LOADED_PLUGINS="emqx_retainer" \
+    -e EMQX_RETAINER__STORAGE_TYPE = "ram" \
+    -e EMQX_RETAINER__MAX_PAYLOAD_SIZE = 1MB \
     emqx/emqx:latest
 ```
 
@@ -215,8 +213,8 @@ Let's create a static node list cluster from docker-compose.
       environment:
       - "EMQX_NAME=emqx"
       - "EMQX_HOST=node1.emqx.io"
-      - "EMQX_CLUSTER__DISCOVERY=static"
-      - "EMQX_CLUSTER__STATIC__SEEDS=emqx@node1.emqx.io, emqx@node2.emqx.io"
+      - "EMQX_CLUSTER__DISCOVERY_STRATEGY=static"
+      - "EMQX_CLUSTER__STATIC__SEEDS=[emqx@node1.emqx.io, emqx@node2.emqx.io]"
       networks:
         emqx-bridge:
           aliases:
@@ -227,8 +225,8 @@ Let's create a static node list cluster from docker-compose.
       environment:
       - "EMQX_NAME=emqx"
       - "EMQX_HOST=node2.emqx.io"
-      - "EMQX_CLUSTER__DISCOVERY=static"
-      - "EMQX_CLUSTER__STATIC__SEEDS=emqx@node1.emqx.io, emqx@node2.emqx.io"
+      - "EMQX_CLUSTER__DISCOVERY_STRATEGY=static"
+      - "EMQX_CLUSTER__STATIC__SEEDS=[emqx@node1.emqx.io, emqx@node2.emqx.io]"
       networks:
         emqx-bridge:
           aliases:
